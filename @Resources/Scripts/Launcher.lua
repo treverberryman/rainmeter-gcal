@@ -1,4 +1,4 @@
-local flyoutConfig = "GoogleCalendarFlyout"
+local flyoutConfig = "rainmeter-gcal-flyout"
 local flyoutMarkerPath = nil
 
 local function read_text_file(path)

@@ -85,7 +85,7 @@ local function normalize_root_skin_path(path)
   path = tostring(path or "")
   path = path:gsub("[/\\]+$", "")
   path = path:gsub("[/\\]Flyout$", "")
-  path = path:gsub("GoogleCalendarFlyout$", "GoogleCalendar")
+  path = path:gsub("rainmeter%-gcal%-flyout$", "rainmeter-gcal")
   return path .. "\\"
 end
 
@@ -697,7 +697,7 @@ end
 
 function CloseFlyout()
   delete_file(flyoutMarkerPath)
-  SKIN:Bang("!DeactivateConfig", "GoogleCalendarFlyout")
+  SKIN:Bang("!DeactivateConfig", "rainmeter-gcal-flyout")
 end
 
 function Update()
