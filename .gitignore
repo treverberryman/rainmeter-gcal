@@ -1,0 +1,7 @@
+.git/
+tools/GoogleCalendar.app.json
+tools/GoogleCalendar.config.json
+GoogleCalendar.config.json
+tools/LastSyncOutput.txt
+tools/LastTimeFormatOutput.txt
+tools/FlyoutOpen.marker

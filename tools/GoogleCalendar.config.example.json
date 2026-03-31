@@ -1,0 +1,12 @@
+{
+  "clientId": "YOUR_DESKTOP_APP_CLIENT_ID",
+  "clientSecret": "YOUR_DESKTOP_APP_CLIENT_SECRET",
+  "refreshToken": "YOUR_REFRESH_TOKEN",
+  "calendarIds": [
+    "primary"
+  ],
+  "timeZone": "America/New_York",
+  "use12HourTime": false,
+  "lookAheadDays": 14,
+  "maxResultsPerCalendar": 100
+}
