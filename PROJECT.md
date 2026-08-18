@@ -27,10 +27,10 @@ rainmeter-gcal/
 
 ## First-time setup
 
-1. Copy `tools/IcalCalendar.config.example.json` to `tools/IcalCalendar.config.json`.
+1. Load `rainmeter-gcal\\Calendar.ini` in Rainmeter, open the launcher, then select **Settings** > **SETUP**. This creates a private `tools/IcalCalendar.config.json` from the example and opens it.
 2. In Google Calendar, open **Settings and sharing** for each calendar, then copy its **Secret address in iCal format**.
-3. Add each URL, display name, and `#RRGGBB` color to `IcalCalendar.config.json`.
-4. Load `rainmeter-gcal\\Calendar.ini` in Rainmeter, open the launcher, and select **Refresh**.
+3. Add each URL, display name, and `#RRGGBB` color to `IcalCalendar.config.json`, then save the file.
+4. Return to the flyout and select **Refresh**. The local event cache and any additional timeline slots are generated automatically.
 
 ## Security and publishing
 
