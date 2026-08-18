@@ -9,6 +9,20 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class ConsoleWindow {
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr handle, int command);
+}
+'@
+
+# Rainmeter must launch this process visibly for WinForms to work. Hide only its
+# console host, leaving the guided setup window available to the user.
+[ConsoleWindow]::ShowWindow([ConsoleWindow]::GetConsoleWindow(), 0) | Out-Null
 
 function Read-Config([string]$Path) {
     if (Test-Path -LiteralPath $Path) {
