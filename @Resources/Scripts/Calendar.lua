@@ -362,7 +362,7 @@ local function set_day_view_visibility(visible)
 end
 
 local function update_timeline_now_indicator()
-  if state.settingsOpen or state.view ~= "day" or state.selectedOffset ~= 0 then
+  if state.detailsOpen or state.settingsOpen or state.view ~= "day" or state.selectedOffset ~= 0 then
     SKIN:Bang("!HideMeter", "MeterNowIndicator")
     SKIN:Bang("!HideMeter", "MeterNowIndicatorText")
     return
