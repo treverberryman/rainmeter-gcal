@@ -26,6 +26,7 @@ local configFilePath = nil
 local rootSkinPath = nil
 local flyoutMarkerPath = nil
 local update_settings_visibility
+local update_details_visibility
 local visible_events
 local manualInteractionCooldownSeconds = 60
 
@@ -595,6 +596,7 @@ local function update_panel_visibility()
   end
 
   update_settings_visibility()
+  update_details_visibility()
 end
 
 update_settings_visibility = function()
@@ -616,6 +618,22 @@ update_settings_visibility = function()
     SKIN:Bang("!HideMeter", "MeterSettingsSetup")
     SKIN:Bang("!HideMeter", "MeterSettingsBack")
     SKIN:Bang("!HideMeter", "MeterSettingsSyncStatus")
+    update_timeline_now_indicator()
+  end
+end
+
+update_details_visibility = function()
+  local meters = {
+    "MeterDetailsOverlay", "MeterDetailsTitle", "MeterDetailsTime",
+    "MeterDetailsMeta", "MeterDetailsBody", "MeterDetailsClose", "MeterDetailsCloseHit"
+  }
+  for _, meter in ipairs(meters) do
+    SKIN:Bang(state.detailsOpen and "!ShowMeter" or "!HideMeter", meter)
+  end
+  if state.detailsOpen then
+    SKIN:Bang("!HideMeter", "MeterNowIndicator")
+    SKIN:Bang("!HideMeter", "MeterNowIndicatorText")
+  elseif not state.settingsOpen then
     update_timeline_now_indicator()
   end
 end
@@ -836,6 +854,7 @@ local function load_events()
 end
 
 function Initialize()
+  state.detailsOpen = false
   set_var("DetailsHidden", 1)
   rootSkinPath = normalize_root_skin_path(SKIN:GetVariable("CURRENTPATH"))
   cacheFilePath = rootSkinPath .. "@Resources\\Data\\CalendarCache.lua"
@@ -849,6 +868,7 @@ function Initialize()
   else
     set_var("PanelX", SKIN:GetVariable("CollapsedPanelX"))
   end
+  update_details_visibility()
   if not load_events() then
     show_error("Could not load " .. cacheFilePath)
     return
@@ -901,14 +921,14 @@ function ShowEventDetails(slot)
   set_var("DetailsMeta", ascii_only(event.meta))
   set_var("DetailsBody", ascii_only(event.details ~= "" and event.details or "No additional event details are available."))
   set_var("DetailsHidden", 0)
-  SKIN:Bang("!HideMeter", "MeterNowIndicator")
-  SKIN:Bang("!HideMeter", "MeterNowIndicatorText")
+  update_details_visibility()
   redraw()
 end
 
 function HideEventDetails()
   state.detailsOpen = false
   set_var("DetailsHidden", 1)
+  update_details_visibility()
   update_rows()
   redraw()
 end
