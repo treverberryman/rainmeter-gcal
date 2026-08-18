@@ -172,10 +172,11 @@ function Convert-IcalEvents([string]$Content, [System.Collections.IDictionary]$C
             $eventEnd = $end.AddTicks(($start - $startInfo.value).Ticks); $allDay = [bool]$startInfo.allDay
             $summaryProperty = Get-Property $raw 'SUMMARY'; $summary = Unescape-IcalText $(if ($summaryProperty) { $summaryProperty.value } else { '' }); if ([string]::IsNullOrWhiteSpace($summary)) { $summary = '(Untitled event)' }
             $locationProperty = Get-Property $raw 'LOCATION'; $location = Unescape-IcalText $(if ($locationProperty) { $locationProperty.value } else { '' })
+            $descriptionProperty = Get-Property $raw 'DESCRIPTION'; $details = Unescape-IcalText $(if ($descriptionProperty) { $descriptionProperty.value } else { '' })
             $clock = if ($Config.use12HourTime) { $start.ToString('h:mm') } else { $start.ToString('HH:mm') }
             $duration = if ($allDay) { 'ALL DAY' } elseif ($Config.use12HourTime) { '{0} - {1}' -f $start.ToString('h:mm'), $eventEnd.ToString('h:mm') } else { '{0} - {1}' -f $start.ToString('HH:mm'), $eventEnd.ToString('HH:mm') }
             $meta = @($Calendar.name); if ($location) { $meta += $location }; $meta += $duration
-            $events.Add([pscustomobject][ordered]@{ year=$start.Year; month=$start.Month; day=$start.Day; sortTime=if ($allDay) {'00:00'} else {$start.ToString('HH:mm')}; timeLabel=if ($allDay) { "$($start.ToString('ddd').ToUpperInvariant()) ALL DAY" } else { "$($start.ToString('ddd').ToUpperInvariant()) $clock" }; title=$summary; durationLabel=$duration; meta=($meta -join ' - '); color=$Calendar.color })
+            $events.Add([pscustomobject][ordered]@{ year=$start.Year; month=$start.Month; day=$start.Day; sortTime=if ($allDay) {'00:00'} else {$start.ToString('HH:mm')}; timeLabel=if ($allDay) { "$($start.ToString('ddd').ToUpperInvariant()) ALL DAY" } else { "$($start.ToString('ddd').ToUpperInvariant()) $clock" }; title=$summary; durationLabel=$duration; meta=($meta -join ' - '); details=$details; color=$Calendar.color })
         }
     }
     return @($events | Sort-Object year, month, day, sortTime, title | Select-Object -First $Config.maxResults)
@@ -184,7 +185,7 @@ function Convert-IcalEvents([string]$Content, [System.Collections.IDictionary]$C
 function Lua([object]$Value) { if ($null -eq $Value) { return '""' }; return '"' + ([string]$Value).Replace('\\','\\\\').Replace('"','\\"').Replace("`r",' ').Replace("`n",' ') + '"' }
 function Write-Cache([object[]]$Events, [string]$Path) {
     $rows = @('return {', '  source = "google-ical",', ('  generatedAt = ' + (Lua (Get-Date -Format 'yyyy-MM-dd HH:mm')) + ','), '  events = {')
-    foreach ($event in $Events) { $rows += '    {'; foreach ($key in @('year','month','day','sortTime','timeLabel','title','durationLabel','meta','color')) { $value = $event.$key; $rows += "      $key = " + $(if ($key -in @('year','month','day')) {$value} else {Lua $value}) + ',' }; $rows += '    },' }
+    foreach ($event in $Events) { $rows += '    {'; foreach ($key in @('year','month','day','sortTime','timeLabel','title','durationLabel','meta','details','color')) { $value = $event.$key; $rows += "      $key = " + $(if ($key -in @('year','month','day')) {$value} else {Lua $value}) + ',' }; $rows += '    },' }
     $rows += '  }'; $rows += '}'; [IO.Directory]::CreateDirectory((Split-Path -Parent $Path)) | Out-Null; [IO.File]::WriteAllText($Path, ($rows -join [Environment]::NewLine), (New-Object Text.UTF8Encoding($false)))
 }
 

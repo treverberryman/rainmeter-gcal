@@ -2,6 +2,8 @@ local state = {
   expanded = true,
   view = "day",
   settingsOpen = false,
+  detailsOpen = false,
+  timelineSlotEvents = {},
   selectedOffset = 0,
   scrollOffset = 0,
   visibleRows = 4,
@@ -183,6 +185,7 @@ local function normalize_event(raw)
     title = tostring(raw.title),
     durationLabel = tostring(raw.durationLabel or ""),
     meta = tostring(raw.meta or ""),
+    details = tostring(raw.details or ""),
     color = tostring(raw.color or "")
   }
 end
@@ -522,6 +525,11 @@ local function update_timeline()
       set_var("DayEvent" .. slot .. "Color", color)
       local titleMeter = "MeterDayEventTitle" .. slot
       local timeMeter = "MeterDayEventTime" .. slot
+      local action = '[!CommandMeasure MeasureScript "ShowEventDetails(' .. slot .. ')"]'
+      state.timelineSlotEvents[slot] = entry.event
+      SKIN:Bang("!SetOption", "MeterDayEvent" .. slot, "LeftMouseUpAction", action)
+      SKIN:Bang("!SetOption", titleMeter, "LeftMouseUpAction", action)
+      SKIN:Bang("!SetOption", timeMeter, "LeftMouseUpAction", action)
       local textColor = event_text_color(color)
       local compactTextNudge = tonumber(SKIN:GetVariable("TimelineCompactTextNudgeY")) or 0
       SKIN:Bang("!SetOption", titleMeter, "FontColor", textColor)
@@ -554,6 +562,7 @@ local function update_timeline()
       end
       set_timeline_meter_visibility(slot, state.view == "day")
     else
+      state.timelineSlotEvents[slot] = nil
       set_timeline_meter_visibility(slot, false)
     end
   end
@@ -812,6 +821,7 @@ local function load_events()
 end
 
 function Initialize()
+  set_var("DetailsHidden", 1)
   rootSkinPath = normalize_root_skin_path(SKIN:GetVariable("CURRENTPATH"))
   cacheFilePath = rootSkinPath .. "@Resources\\Data\\CalendarCache.lua"
   configFilePath = rootSkinPath .. "tools\\IcalCalendar.config.json"
@@ -853,6 +863,8 @@ end
 
 function ShowSettings()
   mark_manual_interaction()
+  state.detailsOpen = false
+  set_var("DetailsHidden", 1)
   state.settingsOpen = true
   update_settings_visibility()
   redraw()
@@ -862,6 +874,24 @@ function HideSettings()
   mark_manual_interaction()
   state.settingsOpen = false
   update_settings_visibility()
+  redraw()
+end
+
+function ShowEventDetails(slot)
+  local event = state.timelineSlotEvents[tonumber(slot)]
+  if not event then return end
+  state.detailsOpen = true
+  set_var("DetailsTitle", ascii_only(event.title))
+  set_var("DetailsTime", ascii_only(date_label({ wday = os.date("*t", event_timestamp(event)).wday, month = event.month, day = event.day }) .. " | " .. event_duration_label(event)))
+  set_var("DetailsMeta", ascii_only(event.meta))
+  set_var("DetailsBody", ascii_only(event.details ~= "" and event.details or "No additional event details are available."))
+  set_var("DetailsHidden", 0)
+  redraw()
+end
+
+function HideEventDetails()
+  state.detailsOpen = false
+  set_var("DetailsHidden", 1)
   redraw()
 end
 
