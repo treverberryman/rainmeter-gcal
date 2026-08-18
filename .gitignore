@@ -1,0 +1,11 @@
+.git/
+tools/GoogleCalendar.app.json
+tools/GoogleCalendar.config.json
+GoogleCalendar.config.json
+tools/LastSyncOutput.txt
+tools/LastTimeFormatOutput.txt
+tools/FlyoutOpen.marker
+tools/IcalCalendar.config.json
+@Resources/Data/CalendarCache.lua
+@Resources/Data/DayTimeline.generated.inc
+@Resources/Data/DayTimeline.generated.variables.inc
