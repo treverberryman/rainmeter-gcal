@@ -123,8 +123,10 @@ $form.Controls.Add($progressStatus)
 $progress = New-Object System.Windows.Forms.ProgressBar
 $progress.Location = New-Object System.Drawing.Point(155, 430)
 $progress.Size = New-Object System.Drawing.Size(390, 18)
-$progress.Style = [System.Windows.Forms.ProgressBarStyle]::Marquee
-$progress.MarqueeAnimationSpeed = 30
+$progress.Style = [System.Windows.Forms.ProgressBarStyle]::Continuous
+$progress.Minimum = 0
+$progress.Maximum = 100
+$progress.Value = 0
 $progress.Visible = $false
 $form.Controls.Add($progress)
 
@@ -156,7 +158,11 @@ function Set-SetupControlsEnabled([bool]$Enabled) {
 }
 
 $syncTimer.add_Tick({
-    if ($null -eq $script:setupSyncProcess -or -not $script:setupSyncProcess.HasExited) { return }
+    if ($null -eq $script:setupSyncProcess) { return }
+    if (-not $script:setupSyncProcess.HasExited) {
+        $progress.Value = if ($progress.Value -ge 95) { 8 } else { $progress.Value + 3 }
+        return
+    }
     $syncTimer.Stop()
     $details = (($script:setupSyncProcess.StandardOutput.ReadToEnd() + $script:setupSyncProcess.StandardError.ReadToEnd()).Trim())
     $succeeded = $script:setupSyncProcess.ExitCode -eq 0
@@ -214,9 +220,11 @@ $save.add_Click({
             return
         }
         Set-SetupControlsEnabled $false
-        $form.UseWaitCursor = $true
+        $form.UseWaitCursor = $false
         $progressStatus.Text = 'Configuration saved. Fetching calendar events…'
         $progressStatus.Visible = $true
+        $progressStatus.Text = 'Configuration saved. Fetching calendar events...'
+        $progress.Value = 8
         $progress.Visible = $true
         $projectRoot = Split-Path -Parent $PSScriptRoot
         $syncScript = Join-Path $PSScriptRoot 'Sync-IcalCalendar.ps1'
