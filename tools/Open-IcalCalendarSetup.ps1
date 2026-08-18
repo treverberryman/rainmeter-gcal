@@ -146,24 +146,33 @@ $form.CancelButton = $cancel
 $worker = New-Object System.ComponentModel.BackgroundWorker
 $worker.add_DoWork({
     param($sender, $event)
-    $projectRoot = Split-Path -Parent $PSScriptRoot
-    $syncScript = Join-Path $PSScriptRoot 'Sync-IcalCalendar.ps1'
-    $outputPath = Join-Path $projectRoot '@Resources\Data\CalendarCache.lua'
-    $event.Result = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $syncScript -OutputPath $outputPath -ConfigPath $ConfigPath 2>&1
-    if ($LASTEXITCODE -ne 0) { throw (($event.Result | Out-String).Trim()) }
+    try {
+        $projectRoot = Split-Path -Parent $PSScriptRoot
+        $syncScript = Join-Path $PSScriptRoot 'Sync-IcalCalendar.ps1'
+        $outputPath = Join-Path $projectRoot '@Resources\Data\CalendarCache.lua'
+        $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $syncScript -OutputPath $outputPath -ConfigPath $ConfigPath 2>&1
+        $event.Result = [pscustomobject]@{
+            success = ($LASTEXITCODE -eq 0)
+            details = ($output | Out-String).Trim()
+        }
+    } catch {
+        $event.Result = [pscustomobject]@{ success = $false; details = $_.ToString() }
+    }
 })
 $worker.add_RunWorkerCompleted({
     param($sender, $event)
     $form.UseWaitCursor = $false
     $progress.Visible = $false
     $progressStatus.Visible = $false
-    if ($event.Error) {
+    $result = $event.Result
+    if ($null -eq $result -or -not $result.success) {
         $grid.Enabled = $true
         $add.Enabled = $true
         $syncNow.Enabled = $true
         $save.Enabled = $true
         $cancel.Enabled = $true
-        $message = ('The configuration was saved, but syncing failed.{0}{0}{1}' -f [Environment]::NewLine, $event.Error.Exception.Message)
+        $details = if ($null -ne $result -and $result.details) { [string]$result.details } else { 'No details were returned. Check the Secret iCal URLs and try again.' }
+        $message = ('The configuration was saved, but syncing failed.{0}{0}{1}' -f [Environment]::NewLine, $details)
         [Windows.Forms.MessageBox]::Show($message, 'Setup error')
         return
     }
