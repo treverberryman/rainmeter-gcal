@@ -214,6 +214,21 @@ local function ascii_only(text)
   return text
 end
 
+local function wrap_text(text, limit)
+  local words, lines, line = {}, {}, ""
+  for word in tostring(text or ""):gmatch("%S+") do table.insert(words, word) end
+  for _, word in ipairs(words) do
+    if #line > 0 and (#line + #word + 1) > limit then
+      table.insert(lines, line)
+      line = word
+    else
+      line = (#line > 0) and (line .. " " .. word) or word
+    end
+  end
+  if #line > 0 then table.insert(lines, line) end
+  return table.concat(lines, "\n")
+end
+
 local function sort_events()
   table.sort(state.events, function(a, b)
     if a.year ~= b.year then
@@ -881,17 +896,20 @@ function ShowEventDetails(slot)
   local event = state.timelineSlotEvents[tonumber(slot)]
   if not event then return end
   state.detailsOpen = true
-  set_var("DetailsTitle", ascii_only(event.title))
+  set_var("DetailsTitle", wrap_text(ascii_only(event.title), 28))
   set_var("DetailsTime", ascii_only(date_label({ wday = os.date("*t", event_timestamp(event)).wday, month = event.month, day = event.day }) .. " | " .. event_duration_label(event)))
   set_var("DetailsMeta", ascii_only(event.meta))
   set_var("DetailsBody", ascii_only(event.details ~= "" and event.details or "No additional event details are available."))
   set_var("DetailsHidden", 0)
+  SKIN:Bang("!HideMeter", "MeterNowIndicator")
+  SKIN:Bang("!HideMeter", "MeterNowIndicatorText")
   redraw()
 end
 
 function HideEventDetails()
   state.detailsOpen = false
   set_var("DetailsHidden", 1)
+  update_rows()
   redraw()
 end
 
