@@ -1,0 +1,18 @@
+{
+  "timeZone": "America/New_York",
+  "use12HourTime": true,
+  "lookAheadDays": 14,
+  "maxResults": 100,
+  "calendars": [
+    {
+      "name": "Personal",
+      "icalUrl": "PASTE_YOUR_GOOGLE_SECRET_ICAL_URL_HERE",
+      "color": "#4285F4DC"
+    },
+    {
+      "name": "Work",
+      "icalUrl": "PASTE_YOUR_OTHER_GOOGLE_SECRET_ICAL_URL_HERE",
+      "color": "#34A853DC"
+    }
+  ]
+}

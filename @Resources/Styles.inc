@@ -88,7 +88,7 @@ FontFace=#EmojiFontName#
 FontColor=#TextColor#
 FontSize=11
 ClipString=2
-W=170
+W=220
 H=20
 AntiAlias=1
 
@@ -98,7 +98,7 @@ FontFace=#EmojiFontName#
 FontColor=#MutedTextColor#
 FontSize=9
 ClipString=2
-W=170
+W=220
 H=18
 AntiAlias=1
 
@@ -114,4 +114,20 @@ StringAlign=CenterCenter
 FontFace=#FontName#
 FontColor=#TextColor#
 FontSize=23
+AntiAlias=1
+
+[StyleIconWeek]
+StringAlign=CenterCenter
+FontFace=#FontName#
+FontColor=#TextColor#
+FontSize=8
+StringStyle=Bold
+AntiAlias=1
+
+[StyleWeek]
+StringAlign=Left
+FontFace=#FontName#
+FontColor=#AccentColor#
+FontSize=11
+StringStyle=Bold
 AntiAlias=1

@@ -5,8 +5,14 @@ local state = {
   selectedOffset = 0,
   scrollOffset = 0,
   visibleRows = 4,
+  timelineStartHour = 6,
+  timelineHours = 7,
+  timelinePixelsPerHour = 56,
+  timelineTopY = 160,
+  timelineSlots = 20,
   lastManualInteractionAt = 0,
   lastAutoJumpMinuteKey = "",
+  lastNowIndicatorMinuteKey = "",
   dayIndex = {},
   events = {}
 }
@@ -18,6 +24,7 @@ local configFilePath = nil
 local rootSkinPath = nil
 local flyoutMarkerPath = nil
 local update_settings_visibility
+local visible_events
 local manualInteractionCooldownSeconds = 60
 
 local function set_var(name, value)
@@ -175,7 +182,8 @@ local function normalize_event(raw)
     timeLabel = tostring(raw.timeLabel or "--"),
     title = tostring(raw.title),
     durationLabel = tostring(raw.durationLabel or ""),
-    meta = tostring(raw.meta or "")
+    meta = tostring(raw.meta or ""),
+    color = tostring(raw.color or "")
   }
 end
 
@@ -296,10 +304,259 @@ local function event_day_duration_label(event)
 end
 
 local function fill_row(index, event)
-  set_var("Row" .. index .. "Bg", SKIN:GetVariable("RowColor"))
+  local color = tostring(event.color or "")
+  if not color:match("^%d+,%d+,%d+,%d+$") then
+    color = SKIN:GetVariable("RowColor")
+  end
+  set_var("Row" .. index .. "Bg", color)
   set_var("Row" .. index .. "Time", event_day_duration_label(event))
   set_var("Row" .. index .. "Title", ascii_only(event.title))
   set_var("Row" .. index .. "Meta", ascii_only(event.meta))
+end
+
+local function set_timeline_meter_visibility(index, visible)
+  local action = visible and "!ShowMeter" or "!HideMeter"
+  SKIN:Bang(action, "MeterDayEvent" .. index)
+  SKIN:Bang(action, "MeterDayEventTitle" .. index)
+  SKIN:Bang(action, "MeterDayEventTime" .. index)
+end
+
+local function set_day_view_visibility(visible)
+  local action = visible and "!ShowMeter" or "!HideMeter"
+  for index = 1, 8 do
+    SKIN:Bang(action, "MeterTimelineLabel" .. index)
+    SKIN:Bang(action, "MeterTimelineLine" .. index)
+  end
+  for index = 1, state.timelineSlots do
+    set_timeline_meter_visibility(index, visible)
+  end
+  SKIN:Bang(action, "MeterAllDayBackground")
+  SKIN:Bang(action, "MeterAllDayText")
+  SKIN:Bang(visible and "!ShowMeter" or "!HideMeter", "MeterNowIndicator")
+  SKIN:Bang(visible and "!ShowMeter" or "!HideMeter", "MeterNowIndicatorText")
+  for index = 1, state.visibleRows do
+    SKIN:Bang(visible and "!HideMeter" or "!ShowMeter", "MeterRowBackground" .. index)
+    SKIN:Bang(visible and "!HideMeter" or "!ShowMeter", "MeterRowTime" .. index)
+    SKIN:Bang(visible and "!HideMeter" or "!ShowMeter", "MeterRowTitle" .. index)
+    SKIN:Bang(visible and "!HideMeter" or "!ShowMeter", "MeterRowMeta" .. index)
+  end
+end
+
+local function update_timeline_now_indicator()
+  if state.settingsOpen or state.view ~= "day" or state.selectedOffset ~= 0 then
+    SKIN:Bang("!HideMeter", "MeterNowIndicator")
+    SKIN:Bang("!HideMeter", "MeterNowIndicatorText")
+    return
+  end
+
+  local now = os.date("*t")
+  local nowMinutes = (now.hour * 60) + now.min
+  local startMinute = state.timelineStartHour * 60
+  local endMinute = startMinute + (state.timelineHours * 60)
+  if nowMinutes < startMinute or nowMinutes > endMinute then
+    SKIN:Bang("!HideMeter", "MeterNowIndicator")
+    SKIN:Bang("!HideMeter", "MeterNowIndicatorText")
+    return
+  end
+
+  local y = math.floor(state.timelineTopY + (((nowMinutes - startMinute) / 60) * state.timelinePixelsPerHour))
+  set_var("NowIndicatorY", y)
+  local timeText
+  if use_12_hour_time_enabled() then
+    local hour = now.hour % 12
+    if hour == 0 then hour = 12 end
+    timeText = string.format("%d:%02d", hour, now.min)
+  else
+    timeText = string.format("%02d:%02d", now.hour, now.min)
+  end
+  local trackedCharacters = {}
+  for index = 1, #timeText do
+    trackedCharacters[#trackedCharacters + 1] = timeText:sub(index, index)
+  end
+  -- Rainmeter String meters have no character-spacing option. Use ordinary
+  -- spaces here: special Unicode spaces are decoded inconsistently by its
+  -- variable update path.
+  set_var("NowIndicatorTime", table.concat(trackedCharacters, " "))
+  SKIN:Bang("!ShowMeter", "MeterNowIndicator")
+  SKIN:Bang("!ShowMeter", "MeterNowIndicatorText")
+end
+
+local function position_timeline_near_now()
+  local now = os.date("*t")
+  -- Leave about one hour above the current hour. This puts "now" near the
+  -- upper third of the six-hour window while retaining useful context.
+  state.timelineStartHour = math.max(0, math.min(24 - state.timelineHours, now.hour - 1))
+end
+
+local function format_timeline_hour(hour)
+  hour = hour % 24
+  if use_12_hour_time_enabled() then
+    local suffix = hour >= 12 and "PM" or "AM"
+    local display = hour % 12
+    if display == 0 then display = 12 end
+    return string.format("%d %s", display, suffix)
+  end
+  return string.format("%02d:00", hour)
+end
+
+local function event_end_minutes(event)
+  local label = tostring(event.durationLabel or "")
+  if label == "ALL DAY" then return 1440 end
+  local sh, sm, eh, em = label:match("^(%d%d?):(%d%d)%s*%-%s*(%d%d?):(%d%d)$")
+  if sh then
+    local labelStart = (tonumber(sh) * 60) + tonumber(sm)
+    local labelEnd = (tonumber(eh) * 60) + tonumber(em)
+    local duration = labelEnd - labelStart
+    -- 12-hour labels omit AM/PM; derive the duration, then apply it to the
+    -- event's canonical 24-hour sortTime so afternoon events remain in PM.
+    if duration <= 0 then duration = duration + 720 end
+    return event_minutes(event) + duration
+  end
+  return event_minutes(event) + 60
+end
+
+local function format_event_start_time(event)
+  local minutes = event_minutes(event)
+  local hour = math.floor(minutes / 60)
+  local minute = minutes % 60
+  if use_12_hour_time_enabled() then
+    local displayHour = hour % 12
+    if displayHour == 0 then displayHour = 12 end
+    return string.format("%d:%02d", displayHour, minute)
+  end
+  return string.format("%02d:%02d", hour, minute)
+end
+
+local function event_text_color(color)
+  local red, green, blue = tostring(color or ""):match("^(%d+),(%d+),(%d+),%d+$")
+  if not red then return SKIN:GetVariable("TextColor") end
+  local brightness = (tonumber(red) * 0.299) + (tonumber(green) * 0.587) + (tonumber(blue) * 0.114)
+  if brightness >= 145 then return "23,24,24,255" end
+  return SKIN:GetVariable("TextColor")
+end
+
+local function update_timeline()
+  local startMinute = state.timelineStartHour * 60
+  local endMinute = startMinute + (state.timelineHours * 60)
+  for index = 1, 8 do
+    set_var("TimelineLabel" .. index, format_timeline_hour(state.timelineStartHour + index - 1))
+  end
+
+  -- Build and lay out the entire selected day before clipping it to the
+  -- currently scrolled hours.  Otherwise an event just above/below the
+  -- viewport disappears from the overlap calculation and makes the remaining
+  -- blocks jump horizontally while scrolling.
+  local allEntries = {}
+  local allDayTitles = {}
+  for _, event in ipairs(visible_events()) do
+    local start = event_minutes(event)
+    local ending = event_end_minutes(event)
+    if event.durationLabel == "ALL DAY" then
+      table.insert(allDayTitles, ascii_only(event.title))
+    else
+      table.insert(allEntries, { event = event, start = start, ending = ending })
+    end
+  end
+
+  if #allDayTitles > 0 then
+    set_var("AllDayText", "ALL DAY | " .. table.concat(allDayTitles, " | "))
+    if state.view == "day" then
+      SKIN:Bang("!ShowMeter", "MeterAllDayBackground")
+      SKIN:Bang("!ShowMeter", "MeterAllDayText")
+    end
+  else
+    SKIN:Bang("!HideMeter", "MeterAllDayBackground")
+    SKIN:Bang("!HideMeter", "MeterAllDayText")
+  end
+
+  table.sort(allEntries, function(a, b)
+    if a.start ~= b.start then return a.start < b.start end
+    return a.ending > b.ending
+  end)
+
+  local position = 1
+  while position <= #allEntries do
+    local groupStart = position
+    local groupEnd = allEntries[position].ending
+    position = position + 1
+    while position <= #allEntries and allEntries[position].start < groupEnd do
+      if allEntries[position].ending > groupEnd then groupEnd = allEntries[position].ending end
+      position = position + 1
+    end
+    local columnEnds, columns = {}, 0
+    for i = groupStart, position - 1 do
+      local column = 1
+      while columnEnds[column] and columnEnds[column] > allEntries[i].start do column = column + 1 end
+      columnEnds[column] = allEntries[i].ending
+      allEntries[i].column = column
+      if column > columns then columns = column end
+    end
+    for i = groupStart, position - 1 do allEntries[i].columns = columns end
+  end
+
+  local entries = {}
+  for _, entry in ipairs(allEntries) do
+    if entry.ending > startMinute and entry.start < endMinute then
+      table.insert(entries, entry)
+    end
+  end
+
+  update_timeline_now_indicator()
+
+  for slot = 1, state.timelineSlots do
+    local entry = entries[slot]
+    if entry then
+      local clippedStart = math.max(entry.start, startMinute)
+      local clippedEnd = math.min(entry.ending, endMinute)
+      local relativeStart = (clippedStart - startMinute) / 60
+      local height = math.max(8, math.floor(((clippedEnd - clippedStart) / 60) * state.timelinePixelsPerHour) - 1)
+      local columnWidth = ((tonumber(SKIN:GetVariable("PanelWidth")) or 430) - 94) / entry.columns
+      local x = 76 + ((entry.column - 1) * columnWidth)
+      local color = tostring(entry.event.color or "")
+      if not color:match("^%d+,%d+,%d+,%d+$") then color = SKIN:GetVariable("RowColor") end
+      local eventY = math.floor(state.timelineTopY + (relativeStart * state.timelinePixelsPerHour))
+      set_var("DayEvent" .. slot .. "X", math.floor(x))
+      set_var("DayEvent" .. slot .. "Y", eventY)
+      set_var("DayEvent" .. slot .. "W", math.max(38, math.floor(columnWidth - 4)))
+      set_var("DayEvent" .. slot .. "H", height)
+      set_var("DayEvent" .. slot .. "Color", color)
+      local titleMeter = "MeterDayEventTitle" .. slot
+      local timeMeter = "MeterDayEventTime" .. slot
+      local textColor = event_text_color(color)
+      local compactTextNudge = tonumber(SKIN:GetVariable("TimelineCompactTextNudgeY")) or 0
+      SKIN:Bang("!SetOption", titleMeter, "FontColor", textColor)
+      SKIN:Bang("!SetOption", timeMeter, "FontColor", textColor)
+      if height < 20 then
+        local textHeight = 12
+        local offset = math.max(0, math.floor((height - textHeight) / 2) + compactTextNudge)
+        SKIN:Bang("!SetOption", titleMeter, "FontSize", "7")
+        SKIN:Bang("!SetOption", titleMeter, "StringStyle", "Bold")
+        SKIN:Bang("!SetOption", titleMeter, "H", tostring(textHeight))
+        set_var("DayEvent" .. slot .. "TextY", eventY + offset)
+        set_var("DayEvent" .. slot .. "Title", ascii_only(entry.event.title))
+        set_var("DayEvent" .. slot .. "Time", "")
+      elseif height < 44 then
+        local textHeight = 16
+        local offset = math.max(1, math.floor((height - textHeight) / 2) + compactTextNudge)
+        SKIN:Bang("!SetOption", titleMeter, "FontSize", "9")
+        SKIN:Bang("!SetOption", titleMeter, "StringStyle", "Normal")
+        SKIN:Bang("!SetOption", titleMeter, "H", tostring(textHeight))
+        set_var("DayEvent" .. slot .. "TextY", eventY + offset)
+        set_var("DayEvent" .. slot .. "Title", format_event_start_time(entry.event) .. "  " .. ascii_only(entry.event.title))
+        set_var("DayEvent" .. slot .. "Time", "")
+      else
+        SKIN:Bang("!SetOption", titleMeter, "FontSize", "11")
+        SKIN:Bang("!SetOption", titleMeter, "StringStyle", "Normal")
+        SKIN:Bang("!SetOption", titleMeter, "H", "20")
+        set_var("DayEvent" .. slot .. "TextY", eventY + 4)
+        set_var("DayEvent" .. slot .. "Title", ascii_only(entry.event.title))
+        set_var("DayEvent" .. slot .. "Time", event_duration_label(entry.event))
+      end
+      set_timeline_meter_visibility(slot, state.view == "day")
+    else
+      set_timeline_meter_visibility(slot, false)
+    end
+  end
 end
 
 local function update_panel_visibility()
@@ -324,6 +581,9 @@ update_settings_visibility = function()
     SKIN:Bang("!ShowMeter", "MeterSettingsTimeFormat")
     SKIN:Bang("!ShowMeter", "MeterSettingsSetup")
     SKIN:Bang("!ShowMeter", "MeterSettingsBack")
+    SKIN:Bang("!ShowMeter", "MeterSettingsSyncStatus")
+    SKIN:Bang("!HideMeter", "MeterNowIndicator")
+    SKIN:Bang("!HideMeter", "MeterNowIndicatorText")
   else
     SKIN:Bang("!HideMeter", "MeterSettingsOverlay")
     SKIN:Bang("!HideMeter", "MeterSettingsTitle")
@@ -331,6 +591,8 @@ update_settings_visibility = function()
     SKIN:Bang("!HideMeter", "MeterSettingsTimeFormat")
     SKIN:Bang("!HideMeter", "MeterSettingsSetup")
     SKIN:Bang("!HideMeter", "MeterSettingsBack")
+    SKIN:Bang("!HideMeter", "MeterSettingsSyncStatus")
+    update_timeline_now_indicator()
   end
 end
 
@@ -359,6 +621,8 @@ local function update_status(source, generatedAt)
   local status = "Cache loaded"
   if source == "google-calendar" then
     status = "Google Calendar"
+  elseif source == "google-ical" then
+    status = "Google iCal feeds"
   elseif source == "mock-sync" then
     status = "Mock sync cache"
   end
@@ -377,7 +641,7 @@ local function update_date_text()
   SKIN:Bang("!SetOption", "MeterIconDay", "Text", tostring(date_tbl.day))
 end
 
-local function visible_events()
+visible_events = function()
   if state.view == "schedule" then
     return state.events
   end
@@ -450,6 +714,10 @@ local function maybe_auto_jump_to_now()
 end
 
 local function update_rows()
+  if state.view == "day" then
+    update_timeline()
+    return
+  end
   local events = visible_events()
   local count = #events
   local maxOffset = math.max(0, count - state.visibleRows)
@@ -546,9 +814,10 @@ end
 function Initialize()
   rootSkinPath = normalize_root_skin_path(SKIN:GetVariable("CURRENTPATH"))
   cacheFilePath = rootSkinPath .. "@Resources\\Data\\CalendarCache.lua"
-  configFilePath = rootSkinPath .. "tools\\GoogleCalendar.config.json"
+  configFilePath = rootSkinPath .. "tools\\IcalCalendar.config.json"
   flyoutMarkerPath = rootSkinPath .. "tools\\FlyoutOpen.marker"
   state.visibleRows = tonumber(SKIN:GetVariable("VisibleRows")) or 5
+  state.timelineSlots = tonumber(SKIN:GetVariable("TimelineSlotCount")) or state.timelineSlots
   write_text_file(flyoutMarkerPath, "open")
   if state.expanded then
     set_var("PanelX", SKIN:GetVariable("ExpandedPanelX"))
@@ -564,7 +833,9 @@ function Initialize()
   update_panel_visibility()
   update_settings_visibility()
   update_tab_colors()
+  set_day_view_visibility(state.view == "day")
   update_date_text()
+  position_timeline_near_now()
   jump_to_now()
   state.lastAutoJumpMinuteKey = current_minute_key()
   update_rows()
@@ -615,13 +886,18 @@ function SetView(view)
   mark_manual_interaction()
   state.view = view
   state.scrollOffset = 0
+  if state.view == "day" then
+    position_timeline_near_now()
+  end
   update_tab_colors()
+  set_day_view_visibility(state.view == "day")
   update_rows()
   redraw()
 end
 
 function ShowDayView()
   if state.view == "day" then
+    position_timeline_near_now()
     jump_to_now()
     update_rows()
     redraw()
@@ -661,6 +937,12 @@ end
 
 function Scroll(delta)
   mark_manual_interaction()
+  if state.view == "day" then
+    state.timelineStartHour = math.max(0, math.min(24 - state.timelineHours, state.timelineStartHour + tonumber(delta)))
+    update_timeline()
+    redraw()
+    return
+  end
   local events = visible_events()
   local maxOffset = math.max(0, #events - state.visibleRows)
   local nextOffset = state.scrollOffset + tonumber(delta)
@@ -697,10 +979,18 @@ end
 
 function CloseFlyout()
   delete_file(flyoutMarkerPath)
-  SKIN:Bang("!DeactivateConfig", "rainmeter-gcal-flyout")
+  SKIN:Bang("!DeactivateConfig", "rainmeter-gcal\\Flyout")
 end
 
 function Update()
   maybe_auto_jump_to_now()
+  -- Update the red current-time marker on minute boundaries without moving a
+  -- timeline the user has manually scrolled.
+  local minuteKey = current_minute_key()
+  if state.lastNowIndicatorMinuteKey ~= minuteKey then
+    state.lastNowIndicatorMinuteKey = minuteKey
+    update_timeline_now_indicator()
+    redraw()
+  end
   return ""
 end
