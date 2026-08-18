@@ -143,35 +143,31 @@ $form.Controls.Add($save)
 $form.AcceptButton = $save
 $form.CancelButton = $cancel
 
-$worker = New-Object System.ComponentModel.BackgroundWorker
-$worker.add_DoWork({
-    param($sender, $event)
-    try {
-        $projectRoot = Split-Path -Parent $PSScriptRoot
-        $syncScript = Join-Path $PSScriptRoot 'Sync-IcalCalendar.ps1'
-        $outputPath = Join-Path $projectRoot '@Resources\Data\CalendarCache.lua'
-        $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $syncScript -OutputPath $outputPath -ConfigPath $ConfigPath 2>&1
-        $event.Result = [pscustomobject]@{
-            success = ($LASTEXITCODE -eq 0)
-            details = ($output | Out-String).Trim()
-        }
-    } catch {
-        $event.Result = [pscustomobject]@{ success = $false; details = $_.ToString() }
-    }
-})
-$worker.add_RunWorkerCompleted({
-    param($sender, $event)
+$syncTimer = New-Object System.Windows.Forms.Timer
+$syncTimer.Interval = 200
+$script:setupSyncProcess = $null
+
+function Set-SetupControlsEnabled([bool]$Enabled) {
+    $grid.Enabled = $Enabled
+    $add.Enabled = $Enabled
+    $syncNow.Enabled = $Enabled
+    $save.Enabled = $Enabled
+    $cancel.Enabled = $Enabled
+}
+
+$syncTimer.add_Tick({
+    if ($null -eq $script:setupSyncProcess -or -not $script:setupSyncProcess.HasExited) { return }
+    $syncTimer.Stop()
+    $details = (($script:setupSyncProcess.StandardOutput.ReadToEnd() + $script:setupSyncProcess.StandardError.ReadToEnd()).Trim())
+    $succeeded = $script:setupSyncProcess.ExitCode -eq 0
+    $script:setupSyncProcess.Dispose()
+    $script:setupSyncProcess = $null
     $form.UseWaitCursor = $false
     $progress.Visible = $false
     $progressStatus.Visible = $false
-    $result = $event.Result
-    if ($null -eq $result -or -not $result.success) {
-        $grid.Enabled = $true
-        $add.Enabled = $true
-        $syncNow.Enabled = $true
-        $save.Enabled = $true
-        $cancel.Enabled = $true
-        $details = if ($null -ne $result -and $result.details) { [string]$result.details } else { 'No details were returned. Check the Secret iCal URLs and try again.' }
+    if (-not $succeeded) {
+        Set-SetupControlsEnabled $true
+        if ([string]::IsNullOrWhiteSpace($details)) { $details = 'No details were returned. Check the Secret iCal URLs and try again.' }
         $message = ('The configuration was saved, but syncing failed.{0}{0}{1}' -f [Environment]::NewLine, $details)
         [Windows.Forms.MessageBox]::Show($message, 'Setup error')
         return
@@ -217,16 +213,25 @@ $save.add_Click({
             $form.Close()
             return
         }
-        $grid.Enabled = $false
-        $add.Enabled = $false
-        $syncNow.Enabled = $false
-        $save.Enabled = $false
-        $cancel.Enabled = $false
+        Set-SetupControlsEnabled $false
         $form.UseWaitCursor = $true
         $progressStatus.Text = 'Configuration saved. Fetching calendar events…'
         $progressStatus.Visible = $true
         $progress.Visible = $true
-        $worker.RunWorkerAsync()
+        $projectRoot = Split-Path -Parent $PSScriptRoot
+        $syncScript = Join-Path $PSScriptRoot 'Sync-IcalCalendar.ps1'
+        $outputPath = Join-Path $projectRoot '@Resources\Data\CalendarCache.lua'
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = 'powershell.exe'
+        $startInfo.Arguments = ('-NoProfile -ExecutionPolicy Bypass -File "{0}" -OutputPath "{1}" -ConfigPath "{2}"' -f $syncScript, $outputPath, $ConfigPath)
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $script:setupSyncProcess = New-Object System.Diagnostics.Process
+        $script:setupSyncProcess.StartInfo = $startInfo
+        if (-not $script:setupSyncProcess.Start()) { throw 'Could not start the calendar sync process.' }
+        $syncTimer.Start()
     } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Setup error') }
 })
 
