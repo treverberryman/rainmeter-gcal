@@ -32,6 +32,7 @@ $form.StartPosition = 'CenterScreen'
 $form.ClientSize = New-Object System.Drawing.Size(760, 510)
 $form.MinimumSize = New-Object System.Drawing.Size(760, 510)
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+$form.TopMost = $true
 
 $title = New-Object System.Windows.Forms.Label
 $title.Text = 'Connect your Google Calendars'
@@ -98,6 +99,21 @@ $syncNow.AutoSize = $true
 $syncNow.Location = New-Object System.Drawing.Point(20, 447)
 $form.Controls.Add($syncNow)
 
+$progressStatus = New-Object System.Windows.Forms.Label
+$progressStatus.Location = New-Object System.Drawing.Point(155, 406)
+$progressStatus.Size = New-Object System.Drawing.Size(390, 20)
+$progressStatus.Text = ''
+$progressStatus.Visible = $false
+$form.Controls.Add($progressStatus)
+
+$progress = New-Object System.Windows.Forms.ProgressBar
+$progress.Location = New-Object System.Drawing.Point(155, 430)
+$progress.Size = New-Object System.Drawing.Size(390, 18)
+$progress.Style = [System.Windows.Forms.ProgressBarStyle]::Marquee
+$progress.MarqueeAnimationSpeed = 30
+$progress.Visible = $false
+$form.Controls.Add($progress)
+
 $cancel = New-Object System.Windows.Forms.Button
 $cancel.Text = 'Cancel'
 $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
@@ -112,6 +128,35 @@ $save.Size = New-Object System.Drawing.Size(80, 32)
 $form.Controls.Add($save)
 $form.AcceptButton = $save
 $form.CancelButton = $cancel
+
+$worker = New-Object System.ComponentModel.BackgroundWorker
+$worker.add_DoWork({
+    param($sender, $event)
+    $projectRoot = Split-Path -Parent $PSScriptRoot
+    $syncScript = Join-Path $PSScriptRoot 'Sync-IcalCalendar.ps1'
+    $outputPath = Join-Path $projectRoot '@Resources\Data\CalendarCache.lua'
+    $event.Result = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $syncScript -OutputPath $outputPath -ConfigPath $ConfigPath 2>&1
+    if ($LASTEXITCODE -ne 0) { throw (($event.Result | Out-String).Trim()) }
+})
+$worker.add_RunWorkerCompleted({
+    param($sender, $event)
+    $form.UseWaitCursor = $false
+    $progress.Visible = $false
+    $progressStatus.Visible = $false
+    if ($event.Error) {
+        $grid.Enabled = $true
+        $add.Enabled = $true
+        $syncNow.Enabled = $true
+        $save.Enabled = $true
+        $cancel.Enabled = $true
+        $message = ('The configuration was saved, but syncing failed.{0}{0}{1}' -f [Environment]::NewLine, $event.Error.Exception.Message)
+        [Windows.Forms.MessageBox]::Show($message, 'Setup error')
+        return
+    }
+    [Windows.Forms.MessageBox]::Show('Calendar setup saved and the event cache was refreshed.', 'rainmeter-gcal setup')
+    $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $form.Close()
+})
 
 $grid.add_CellContentClick({
     param($sender, $event)
@@ -143,14 +188,22 @@ $save.add_Click({
     }
     try {
         Write-Config $config $ConfigPath
-        if ($syncNow.Checked) {
-            $projectRoot = Split-Path -Parent $PSScriptRoot
-            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Sync-IcalCalendar.ps1') -OutputPath (Join-Path $projectRoot '@Resources\Data\CalendarCache.lua') -ConfigPath $ConfigPath
-            if ($LASTEXITCODE -ne 0) { throw 'The configuration was saved, but syncing failed. Check the Secret iCal URLs and try Refresh from the skin.' }
+        if (-not $syncNow.Checked) {
+            [Windows.Forms.MessageBox]::Show('Calendar setup saved. Choose Refresh in the flyout when you are ready to fetch events.', 'rainmeter-gcal setup')
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $form.Close()
+            return
         }
-        [Windows.Forms.MessageBox]::Show('Calendar setup saved.' + $(if ($syncNow.Checked) { ' The event cache was refreshed.' } else { '' }), 'rainmeter-gcal setup')
-        $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
-        $form.Close()
+        $grid.Enabled = $false
+        $add.Enabled = $false
+        $syncNow.Enabled = $false
+        $save.Enabled = $false
+        $cancel.Enabled = $false
+        $form.UseWaitCursor = $true
+        $progressStatus.Text = 'Configuration saved. Fetching calendar events…'
+        $progressStatus.Visible = $true
+        $progress.Visible = $true
+        $worker.RunWorkerAsync()
     } catch { [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Setup error') }
 })
 
