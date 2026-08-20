@@ -1,8 +1,8 @@
 {
   "timeZone": "America/New_York",
   "use12HourTime": true,
-  "lookAheadDays": 14,
-  "maxResults": 100,
+  "lookAheadDays": 90,
+  "maxResults": 5000,
   "calendars": [
     {
       "name": "Personal",

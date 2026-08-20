@@ -46,7 +46,7 @@ function Get-Config([string]$Path) {
     return [ordered]@{
         calendars = $normalizedCalendars.ToArray()
         use12HourTime = [bool]$config.use12HourTime; lookAheadDays = if ($config.lookAheadDays) { [int]$config.lookAheadDays } else { 14 }
-        maxResults = if ($config.maxResults) { [int]$config.maxResults } else { 100 }
+        maxResults = if ($config.maxResults) { [int]$config.maxResults } else { 5000 }
     }
 }
 
@@ -126,6 +126,15 @@ function Convert-IcalEvents([string]$Content, [System.Collections.IDictionary]$C
                 } | Sort-Object -Unique)
                 $weekStart = $startInfo.value.Date.AddDays(-[int]$startInfo.value.DayOfWeek)
                 $occurrenceCount = 0; $stop = $false
+                # Skip whole past weeks for open-ended series. Without this,
+                # a longer cache window repeatedly expands years of history
+                # before it reaches the dates the skin can display.
+                if ($count -eq 0 -and $weekStart -lt $windowStart) {
+                    $weeksToSkip = [math]::Max(0, [math]::Floor(($windowStart.Date - $weekStart).TotalDays / (7 * $interval)))
+                    if ($weeksToSkip -gt 0) {
+                        $weekStart = $weekStart.AddDays(7 * $interval * $weeksToSkip)
+                    }
+                }
                 while ($weekStart -lt $windowEnd -and $iterations -lt 1000 -and -not $stop) {
                     foreach ($dayNumber in $weekDays) {
                         $candidate = $weekStart.AddDays($dayNumber).Add($startInfo.value.TimeOfDay)
@@ -139,6 +148,25 @@ function Convert-IcalEvents([string]$Content, [System.Collections.IDictionary]$C
                     $iterations++
                 }
             } else {
+                # Fast-forward open-ended recurrences to the beginning of the
+                # cache window. COUNT-based series retain the sequential path
+                # so their occurrence limit stays exact.
+                if ($count -eq 0 -and $candidate -lt $windowStart) {
+                    if ($frequency -eq 'DAILY') {
+                        $skip = [math]::Max(0, [math]::Floor(($windowStart - $candidate).TotalDays / $interval))
+                        $candidate = $candidate.AddDays($skip * $interval)
+                    } elseif ($frequency -eq 'WEEKLY') {
+                        $skip = [math]::Max(0, [math]::Floor(($windowStart - $candidate).TotalDays / (7 * $interval)))
+                        $candidate = $candidate.AddDays(7 * $skip * $interval)
+                    } elseif ($frequency -eq 'MONTHLY') {
+                        $months = (($windowStart.Year - $candidate.Year) * 12) + ($windowStart.Month - $candidate.Month)
+                        $skip = [math]::Max(0, [math]::Floor($months / $interval))
+                        $candidate = $candidate.AddMonths($skip * $interval)
+                    } elseif ($frequency -eq 'YEARLY') {
+                        $skip = [math]::Max(0, [math]::Floor(($windowStart.Year - $candidate.Year) / $interval))
+                        $candidate = $candidate.AddYears($skip * $interval)
+                    }
+                }
                 while ($candidate -lt $windowEnd -and $iterations -lt 1000 -and ($count -eq 0 -or $iterations -lt $count) -and ($null -eq $until -or $candidate -le $until)) {
                     if ($candidate -ge $windowStart) { $occurrences.Add($candidate) }
                     if ($frequency -eq 'DAILY') { $candidate = $candidate.AddDays($interval) }
@@ -182,7 +210,7 @@ function Convert-IcalEvents([string]$Content, [System.Collections.IDictionary]$C
     return @($events | Sort-Object year, month, day, sortTime, title | Select-Object -First $Config.maxResults)
 }
 
-function Lua([object]$Value) { if ($null -eq $Value) { return '""' }; return '"' + ([string]$Value).Replace('\\','\\\\').Replace('"','\\"').Replace("`r",' ').Replace("`n",' ') + '"' }
+function Lua([object]$Value) { if ($null -eq $Value) { return '""' }; return '"' + ([string]$Value).Replace('\','\\').Replace('"','\"').Replace("`r",' ').Replace("`n",' ') + '"' }
 function Write-Cache([object[]]$Events, [string]$Path) {
     $rows = @('return {', '  source = "google-ical",', ('  generatedAt = ' + (Lua (Get-Date -Format 'yyyy-MM-dd HH:mm')) + ','), '  events = {')
     foreach ($event in $Events) { $rows += '    {'; foreach ($key in @('year','month','day','sortTime','timeLabel','title','durationLabel','meta','details','color')) { $value = $event.$key; $rows += "      $key = " + $(if ($key -in @('year','month','day')) {$value} else {Lua $value}) + ',' }; $rows += '    },' }

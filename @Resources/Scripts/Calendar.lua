@@ -10,8 +10,12 @@ local state = {
   timelineStartHour = 6,
   timelineHours = 7,
   timelinePixelsPerHour = 56,
-  timelineTopY = 160,
+  timelineTopY = 257,
   timelineSlots = 20,
+  calendarYear = nil,
+  calendarMonth = nil,
+  calendarMode = "days",
+  calendarSlots = {},
   lastManualInteractionAt = 0,
   lastAutoJumpMinuteKey = "",
   lastNowIndicatorMinuteKey = "",
@@ -166,6 +170,88 @@ end
 
 local function date_label(date_tbl)
   return string.format("%s, %s %02d", weekdays[date_tbl.wday], months[date_tbl.month], date_tbl.day)
+end
+
+local function calendar_month_days(year, month)
+  return os.date("*t", os.time({ year = year, month = month + 1, day = 0, hour = 12 })).day
+end
+
+local function calendar_shift_month(delta)
+  state.calendarMonth = state.calendarMonth + delta
+  while state.calendarMonth < 1 do
+    state.calendarMonth = state.calendarMonth + 12
+    state.calendarYear = state.calendarYear - 1
+  end
+  while state.calendarMonth > 12 do
+    state.calendarMonth = state.calendarMonth - 12
+    state.calendarYear = state.calendarYear + 1
+  end
+end
+
+local function set_calendar_visibility()
+  local visible = state.expanded and not state.settingsOpen and not state.detailsOpen
+  local action = visible and "!ShowMeter" or "!HideMeter"
+  if state.calendarMode == "days" then
+    SKIN:Bang(action, "MeterCalendarPrevious")
+    SKIN:Bang(action, "MeterCalendarTitle")
+    SKIN:Bang(action, "MeterCalendarNext")
+    for index = 1, 7 do SKIN:Bang(action, "MeterCalendarWeekday" .. index) end
+    for index = 1, 42 do SKIN:Bang(action, "MeterCalendarDay" .. index) end
+    for index = 1, 12 do SKIN:Bang("!HideMeter", "MeterCalendarMonth" .. index) end
+    SKIN:Bang("!HideMeter", "MeterCalendarMonthPrevious")
+    SKIN:Bang("!HideMeter", "MeterCalendarYear")
+    SKIN:Bang("!HideMeter", "MeterCalendarMonthNext")
+  else
+    SKIN:Bang("!HideMeter", "MeterCalendarPrevious")
+    SKIN:Bang("!HideMeter", "MeterCalendarTitle")
+    SKIN:Bang("!HideMeter", "MeterCalendarNext")
+    for index = 1, 7 do SKIN:Bang("!HideMeter", "MeterCalendarWeekday" .. index) end
+    for index = 1, 42 do SKIN:Bang("!HideMeter", "MeterCalendarDay" .. index) end
+    SKIN:Bang(action, "MeterCalendarMonthPrevious")
+    SKIN:Bang(action, "MeterCalendarYear")
+    SKIN:Bang(action, "MeterCalendarMonthNext")
+    for index = 1, 12 do SKIN:Bang(action, "MeterCalendarMonth" .. index) end
+  end
+end
+
+local function update_calendar()
+  local selected = selected_date_table()
+  set_var("CalendarTitle", string.format("%s %04d", months[state.calendarMonth], state.calendarYear))
+  set_var("CalendarYear", tostring(state.calendarYear))
+
+  if state.calendarMode == "days" then
+    local first = os.date("*t", os.time({ year = state.calendarYear, month = state.calendarMonth, day = 1, hour = 12 }))
+    local startSlot = first.wday
+    local dayCount = calendar_month_days(state.calendarYear, state.calendarMonth)
+    state.calendarSlots = {}
+    for slot = 1, 42 do
+      local day = slot - startSlot + 1
+      local active = day >= 1 and day <= dayCount
+      state.calendarSlots[slot] = active and { year = state.calendarYear, month = state.calendarMonth, day = day } or nil
+      set_var("CalendarDay" .. slot .. "Text", active and tostring(day) or "")
+      if active and selected.year == state.calendarYear and selected.month == state.calendarMonth and selected.day == day then
+        set_var("CalendarDay" .. slot .. "Color", SKIN:GetVariable("SelectedTabText"))
+        set_var("CalendarDay" .. slot .. "Bg", SKIN:GetVariable("SelectedTabBg"))
+      elseif active then
+        set_var("CalendarDay" .. slot .. "Color", SKIN:GetVariable("TextColor"))
+        set_var("CalendarDay" .. slot .. "Bg", "0,0,0,1")
+      else
+        set_var("CalendarDay" .. slot .. "Color", SKIN:GetVariable("MutedTextColor"))
+        set_var("CalendarDay" .. slot .. "Bg", "0,0,0,1")
+      end
+    end
+  else
+    for index = 1, 12 do
+      if index == state.calendarMonth then
+        set_var("CalendarMonth" .. index .. "Color", SKIN:GetVariable("SelectedTabText"))
+        set_var("CalendarMonth" .. index .. "Bg", SKIN:GetVariable("SelectedTabBg"))
+      else
+        set_var("CalendarMonth" .. index .. "Color", SKIN:GetVariable("TextColor"))
+        set_var("CalendarMonth" .. index .. "Bg", SKIN:GetVariable("IdleTabBg"))
+      end
+    end
+  end
+  set_calendar_visibility()
 end
 
 local function normalize_event(raw)
@@ -428,7 +514,14 @@ local function event_end_minutes(event)
     local duration = labelEnd - labelStart
     -- 12-hour labels omit AM/PM; derive the duration, then apply it to the
     -- event's canonical 24-hour sortTime so afternoon events remain in PM.
-    if duration <= 0 then duration = duration + 720 end
+    -- Google/TickTick can export zero-duration tasks with identical DTSTART
+    -- and DTEND values. Render those as a short block, not a twelve-hour
+    -- event. Negative durations still indicate an AM/PM crossover.
+    if duration == 0 then
+      duration = tonumber(SKIN:GetVariable("ZeroDurationEventMinutes")) or 30
+    elseif duration < 0 then
+      duration = duration + 720
+    end
     return event_minutes(event) + duration
   end
   return event_minutes(event) + 60
@@ -597,6 +690,7 @@ local function update_panel_visibility()
 
   update_settings_visibility()
   update_details_visibility()
+  set_calendar_visibility()
 end
 
 update_settings_visibility = function()
@@ -610,6 +704,7 @@ update_settings_visibility = function()
     SKIN:Bang("!ShowMeter", "MeterSettingsSyncStatus")
     SKIN:Bang("!HideMeter", "MeterNowIndicator")
     SKIN:Bang("!HideMeter", "MeterNowIndicatorText")
+    set_calendar_visibility()
   else
     SKIN:Bang("!HideMeter", "MeterSettingsOverlay")
     SKIN:Bang("!HideMeter", "MeterSettingsTitle")
@@ -619,6 +714,7 @@ update_settings_visibility = function()
     SKIN:Bang("!HideMeter", "MeterSettingsBack")
     SKIN:Bang("!HideMeter", "MeterSettingsSyncStatus")
     update_timeline_now_indicator()
+    set_calendar_visibility()
   end
 end
 
@@ -636,6 +732,7 @@ update_details_visibility = function()
   elseif not state.settingsOpen then
     update_timeline_now_indicator()
   end
+  set_calendar_visibility()
 end
 
 local function update_tab_colors()
@@ -681,6 +778,10 @@ local function update_date_text()
   set_var("DisplayDate", date_label(date_tbl))
   SKIN:Bang("!SetOption", "MeterIconMonth", "Text", months[date_tbl.month])
   SKIN:Bang("!SetOption", "MeterIconDay", "Text", tostring(date_tbl.day))
+  if state.calendarYear == nil or state.calendarMonth == nil then
+    state.calendarYear, state.calendarMonth = date_tbl.year, date_tbl.month
+  end
+  update_calendar()
 end
 
 visible_events = function()
@@ -862,6 +963,8 @@ function Initialize()
   flyoutMarkerPath = rootSkinPath .. "tools\\FlyoutOpen.marker"
   state.visibleRows = tonumber(SKIN:GetVariable("VisibleRows")) or 5
   state.timelineSlots = tonumber(SKIN:GetVariable("TimelineSlotCount")) or state.timelineSlots
+  local initialDate = selected_date_table()
+  state.calendarYear, state.calendarMonth = initialDate.year, initialDate.month
   write_text_file(flyoutMarkerPath, "open")
   if state.expanded then
     set_var("PanelX", SKIN:GetVariable("ExpandedPanelX"))
@@ -990,6 +1093,9 @@ function ShiftDate(delta)
   mark_manual_interaction()
   state.selectedOffset = state.selectedOffset + tonumber(delta)
   state.scrollOffset = 0
+  local selected = selected_date_table()
+  state.calendarYear, state.calendarMonth = selected.year, selected.month
+  state.calendarMode = "days"
   update_date_text()
   update_rows()
   redraw()
@@ -1001,6 +1107,62 @@ end
 
 function NextDay()
   ShiftDate(1)
+end
+
+function CalendarPrevious()
+  mark_manual_interaction()
+  calendar_shift_month(-1)
+  update_calendar()
+  redraw()
+end
+
+function CalendarNext()
+  mark_manual_interaction()
+  calendar_shift_month(1)
+  update_calendar()
+  redraw()
+end
+
+function ToggleMonthPicker()
+  mark_manual_interaction()
+  state.calendarMode = state.calendarMode == "days" and "months" or "days"
+  update_calendar()
+  redraw()
+end
+
+function ChangeCalendarYear(delta)
+  mark_manual_interaction()
+  state.calendarYear = state.calendarYear + tonumber(delta)
+  update_calendar()
+  redraw()
+end
+
+function SelectCalendarMonth(month)
+  month = tonumber(month)
+  if not month or month < 1 or month > 12 then return end
+  mark_manual_interaction()
+  state.calendarMonth = month
+  state.calendarMode = "days"
+  update_calendar()
+  redraw()
+end
+
+function SelectCalendarDay(slot)
+  local target = state.calendarSlots[tonumber(slot)]
+  if not target then return end
+  local now = os.date("*t")
+  now.hour, now.min, now.sec = 12, 0, 0
+  local targetAtNoon = os.time({ year = target.year, month = target.month, day = target.day, hour = 12, min = 0, sec = 0 })
+  state.selectedOffset = math.floor((os.difftime(targetAtNoon, os.time(now)) / 86400) + 0.5)
+  state.view = "day"
+  state.scrollOffset = 0
+  state.timelineStartHour = 6
+  mark_manual_interaction()
+  update_tab_colors()
+  set_day_view_visibility(true)
+  update_date_text()
+  update_rows()
+  redraw()
 end
 
 function Scroll(delta)
